@@ -2,8 +2,9 @@ using StatsBase, LinearAlgebra
 
 ###### COSTANTS
 # scaling factor in similarity function
-σ = .11    # for absexp
-σ = .0155   # for gaussian
+α = 1
+α₀ = .1
+α₁ = 3.
 
 
 
@@ -35,6 +36,8 @@ mutable struct RBoost
     pretest::Union{Nothing,Matrix}
     # ε[i,j] gives error of model i on pretest point j
     ε::Union{Nothing,Matrix{Float64}}
+    # ho messo l'esponente per la distance2similarity parametrico
+    α::Union{Nothing,Float64}
     RBoost(models::Array) = new(models, nothing, nothing)
 end
 
@@ -42,10 +45,10 @@ mutable struct CBoost
     regressor::RBoost
     activation::Function
     threshold::Union{Nothing,Float64}
-    CBoost(models::Array, activation::Union{Nothing,Function} = tanh) = new(RBoost(models), activation, nothing)
+    CBoost(models::Array, activation::Union{Nothing,Function} = tanh) = new(RBoost(models), activation, nothing, nothing)
 end
 
-function fit!(B::RBoost, data::Matrix, target::Vector)
+function fit!(B::RBoost, data::Matrix, target::Vector; α₀ = α₀, α₁ = α₁)
     ## eventualmente provare il LOO per non necessitare di pretest e usare tutto il test per le predizioni. sistemare dettagli
 
     # costants
@@ -59,11 +62,20 @@ function fit!(B::RBoost, data::Matrix, target::Vector)
     for (ixmodel,model) in enumerate(B.models)
         println("Fitting $(string(model))")
         model.fit(data[train,:], reshape(target[train,:],(:,)))
-        ε[ixmodel,:]  = abs.(model.predict(data[pretest,:]) - target[pretest,:])
+        ε[ixmodel,:]  = abs.(model.predict(data[pretest,:]) - target[pretest])
     end
 
     B.pretest = data[pretest,:]
     B.ε = ε;
+
+    println("α tuning")
+    errs = []
+    for α ∈ α₀:.01:α₁
+        err = sum(abs.(predict(B,data[pretest,:],α) .- target[pretest]))
+        push!(errs,err)
+        println("$α:$err")
+    end
+    findmin(errs)
 end
 
 function fit!(B::CBoost, data::Matrix, target::Vector)
@@ -74,11 +86,11 @@ end
 
 
 ## controllare
-@inline distance2similarity(d, σ = σ) = 1/(d+.1)
+@inline distance2similarity(d, α) = (d+.01)^(-α)
 
 @inline activation(x) = tanh(x)
 
-function predict(B::RBoost, datarow::Vector, σ = σ, verbose::Bool = false)
+function predict(B::RBoost, datarow::Vector, α = α, verbose::Bool = false)
     # take the double weighted mean by inversedinstance and singlemodelerror of predicted values
     ## volendo se li prendo tutti posso scriverlo in modo matriciale
     nbIxs, nbDist = neighbours(B.pretest,datarow)
@@ -86,7 +98,7 @@ function predict(B::RBoost, datarow::Vector, σ = σ, verbose::Bool = false)
     predictions = [first(model.predict(reshape(datarow,(1,:)))) for model in B.models]
 
     # calcolo i pesi da dare ad ogni modello in base al punto attuale
-    Λ = [sum(distance2similarity.(nbDist .* B.ε[mdl,nbIxs], σ)) for mdl ∈ 1:length(B.models)]
+    Λ = [sum(distance2similarity.(nbDist .* B.ε[mdl,nbIxs], α)) for mdl ∈ 1:length(B.models)]
     Λ /= sum(Λ)
 
     # calcolo la predizione
@@ -102,14 +114,14 @@ function predict(B::RBoost, datarow::Vector, σ = σ, verbose::Bool = false)
     end
 end
 
-predict(B::RBoost, data::Matrix, σ = σ, verbose::Bool = false) = [predict(B,data[r,:], σ, verbose) for r ∈ 1:(size(data)[1])]
+predict(B::RBoost, data::Matrix, α = α, verbose::Bool = false) = [predict(B,data[r,:], α, verbose) for r ∈ 1:(size(data)[1])]
 
-predict(B::CBoost, datarow::Vector, σ = σ) = 2sign(B.activation(predict(B.regressor, datarow, σ)) > B.threshold) .- 1
+predict(B::CBoost, datarow::Vector, α = α) = 2sign(B.activation(predict(B.regressor, datarow, α)) > B.threshold) .- 1
 
-predict(B::CBoost, data::Matrix, σ = σ) = [predict(B,data[r,:], σ) for r ∈ 1:(size(data)[1])]
+predict(B::CBoost, data::Matrix, α = α) = [predict(B,data[r,:], α) for r ∈ 1:(size(data)[1])]
 # chiamare nel fit dei CBoost
-function calcThreshold!(B::CBoost, train::Matrix, target::Vector, σ = σ)
-    predvalues = predict(B.regressor,train, σ)
+function calcThreshold!(B::CBoost, train::Matrix, target::Vector, α = α)
+    predvalues = predict(B.regressor,train, α)
     guesses = 0:.01:1
     guesses = sample(guesses, length(guesses),replace=false)
     B.threshold = guesses[findmax([count(sign.(B.activation.(predvalues) .- thrsh) .== target) for thrsh ∈ guesses])[2]]
@@ -124,19 +136,18 @@ end
 #= TOTÒ
     similarità
 · provare similarità con gaussiana
-· provare similarità con x^α (α<0)
-· ? aggiungere scaling factor nella similarità
 
-· LOO
+· LOO   (forse computazionalmente da evitare, altrimenti trovo prima il parametro e faccio uno StochasticLOO!)
+· altrimenti usare un il training anche per la parte di pretesting
 · sistemare gli iperparametri ché così fanno un po' schifo
 · scrivere una fase due in cui alleno i modelli su dataset su cui hanno sbagliato meno
-· sistemare distance2similarity
+· sistemare distance2similarity, e anche un po' tutto il resto
 =#
 
 
 
 
-### Test per attribuire metodi alle struct
+### Test per attribuire metodi alle struct, eventualmente lo farò più in là
 mutable struct C
     x::Int
     stampa::Function
