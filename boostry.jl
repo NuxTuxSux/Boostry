@@ -124,11 +124,11 @@ end
 #= TOTÒ
     similarità
 · provare similarità con gaussiana
+· provare similarità con x^α (α<0)
 · ? aggiungere scaling factor nella similarità
 
 · LOO
 · sistemare gli iperparametri ché così fanno un po' schifo
-· creare classificatore
 · scrivere una fase due in cui alleno i modelli su dataset su cui hanno sbagliato meno
 · sistemare distance2similarity
 =#
