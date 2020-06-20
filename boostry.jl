@@ -1,6 +1,6 @@
 using StatsBase, LinearAlgebra
-
-###### COSTANTS
+import StatsBase.fit!
+###### CONSTANTS
 # scaling factor in similarity function
 α = 1
 α₀ = .1
@@ -34,18 +34,19 @@ mutable struct RBoost
     models::Array
     #names::Vector{String}
     pretest::Union{Nothing,Matrix}
+    pretesttarget::Union{Nothing,Vector}
     # ε[i,j] gives error of model i on pretest point j
     ε::Union{Nothing,Matrix{Float64}}
     # ho messo l'esponente per la distance2similarity parametrico
     α::Union{Nothing,Float64}
-    RBoost(models::Array) = new(models, nothing, nothing)
+    RBoost(models::Array) = new(models, nothing, nothing, nothing, nothing)
 end
 
 mutable struct CBoost
     regressor::RBoost
     activation::Function
     threshold::Union{Nothing,Float64}
-    CBoost(models::Array, activation::Union{Nothing,Function} = tanh) = new(RBoost(models), activation, nothing, nothing)
+    CBoost(models::Array, activation::Union{Nothing,Function} = tanh) = new(RBoost(models), activation, nothing)
 end
 
 function fit!(B::RBoost, data::Matrix, target::Vector; α₀ = α₀, α₁ = α₁)
@@ -59,6 +60,7 @@ function fit!(B::RBoost, data::Matrix, target::Vector; α₀ = α₀, α₁ = α
     ε = zeros(length(B.models),length(pretest))
     
     train = setdiff(1:size(data)[1], pretest)
+    # train = 1:size(data)[1]
     for (ixmodel,model) in enumerate(B.models)
         println("Fitting $(string(model))")
         model.fit(data[train,:], reshape(target[train,:],(:,)))
@@ -66,16 +68,29 @@ function fit!(B::RBoost, data::Matrix, target::Vector; α₀ = α₀, α₁ = α
     end
 
     B.pretest = data[pretest,:]
+    B.pretesttarget = target[pretest]
     B.ε = ε;
 
     println("α tuning")
-    errs = []
-    for α ∈ α₀:.01:α₁
-        err = sum(abs.(predict(B,data[pretest,:],α) .- target[pretest]))
-        push!(errs,err)
-        println("$α:$err")
+    setalpha!(B)
+    # errs = []
+    # for α ∈ α₀:.01:α₁
+        # err = sum(abs.(predict(B,data[pretest,:],α) .- target[pretest]))
+        # push!(errs,err)
+        # println("α = $α: $err")
+    # end
+    # findmin(errs)
+end
+
+function setalpha!(B::RBoost, α₀ = 0.01, α₁ = 5., n_iter = 14)
+    for _ in 1:n_iter
+        α = (α₀ + α₁) / 2
+        err₀ = sum(abs.(predict(B,B.pretest,α₀) .- B.pretesttarget))
+        err₁ = sum(abs.(predict(B,B.pretest,α₁) .- B.pretesttarget))
+        err = sum(abs.(predict(B,B.pretest,α) .- B.pretesttarget))
+        α₀, α₁ = [x[2] for x in sort([(err₀,α₀),(err₁,α₁),(err,α)], by = first)[1:2]]
     end
-    findmin(errs)
+    B.α = (α₀ + α₁)/2
 end
 
 function fit!(B::CBoost, data::Matrix, target::Vector)
@@ -96,6 +111,11 @@ function predict(B::RBoost, datarow::Vector, α = α, verbose::Bool = false)
     nbIxs, nbDist = neighbours(B.pretest,datarow)
     # calcolo le predizioni dei modelli
     predictions = [first(model.predict(reshape(datarow,(1,:)))) for model in B.models]
+
+    # se ho già calcolato α la utilizzo
+    if !isnothing(B.α)
+        α = B.α
+    end
 
     # calcolo i pesi da dare ad ogni modello in base al punto attuale
     Λ = [sum(distance2similarity.(nbDist .* B.ε[mdl,nbIxs], α)) for mdl ∈ 1:length(B.models)]
@@ -142,6 +162,8 @@ end
 · sistemare gli iperparametri ché così fanno un po' schifo
 · scrivere una fase due in cui alleno i modelli su dataset su cui hanno sbagliato meno
 · sistemare distance2similarity, e anche un po' tutto il resto
+· provare a rendere parametrica la distanza, per fare tuning su quel parametro
+· fare il tuning di α per bisezione
 =#
 
 
