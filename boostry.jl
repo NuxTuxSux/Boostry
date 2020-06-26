@@ -82,13 +82,23 @@ function fit!(B::RBoost, data::Matrix, target::Vector; α₀ = α₀, α₁ = α
     # findmin(errs)
 end
 
-function setalpha!(B::RBoost, α₀ = 0.01, α₁ = 5., n_iter = 14)
+function setalpha!(B::RBoost, α₀ = 0.01, α₁ = 5., n_iter = 20)
+    #! assumo che la variazione di errore in α₀ sia negativa e in α₁ positiva
+    ϵ = 0.01
+    
+    Δ₀ = sum(abs.(predict(B,B.pretest, α₀+ϵ) .- B.pretesttarget)) - sum(abs.(predict(B,B.pretest,α₀) .- B.pretesttarget))
+    Δ₁ = sum(abs.(predict(B,B.pretest, α₁+ϵ) .- B.pretesttarget)) - sum(abs.(predict(B,B.pretest,α₁) .- B.pretesttarget))
+    # println("$α₀---$Δ₀\n$α₁---$Δ₁\n")
+        
     for _ in 1:n_iter
         α = (α₀ + α₁) / 2
-        err₀ = sum(abs.(predict(B,B.pretest,α₀) .- B.pretesttarget))
-        err₁ = sum(abs.(predict(B,B.pretest,α₁) .- B.pretesttarget))
-        err = sum(abs.(predict(B,B.pretest,α) .- B.pretesttarget))
-        α₀, α₁ = [x[2] for x in sort([(err₀,α₀),(err₁,α₁),(err,α)], by = first)[1:2]]
+        Δ = sum(abs.(predict(B,B.pretest, α+ϵ) .- B.pretesttarget)) - sum(abs.(predict(B,B.pretest,α) .- B.pretesttarget))
+        # println("$α---$Δ")
+        if Δ > 0
+            α₁ = α
+        else
+            α₀ = α
+        end
     end
     B.α = (α₀ + α₁)/2
 end
@@ -103,6 +113,12 @@ end
 ## controllare
 @inline distance2similarity(d, α) = (d+.01)^(-α)
 
+## amount of say - tentativo imbarazzante
+#=@inline distance2similarity(d, α) = (
+    d₀ = 2atan(α*d)/π;
+    return .5log((1-d₀)/(d₀+0.01))
+)=#
+
 @inline activation(x) = tanh(x)
 
 function predict(B::RBoost, datarow::Vector, α = α, verbose::Bool = false)
@@ -113,9 +129,9 @@ function predict(B::RBoost, datarow::Vector, α = α, verbose::Bool = false)
     predictions = [first(model.predict(reshape(datarow,(1,:)))) for model in B.models]
 
     # se ho già calcolato α la utilizzo
-    if !isnothing(B.α)
-        α = B.α
-    end
+    # if !isnothing(B.α)
+        # α = B.α
+    # end
 
     # calcolo i pesi da dare ad ogni modello in base al punto attuale
     Λ = [sum(distance2similarity.(nbDist .* B.ε[mdl,nbIxs], α)) for mdl ∈ 1:length(B.models)]
